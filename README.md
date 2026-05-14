@@ -1,3 +1,9 @@
+ALUNOS: 
+Alisson Bosa de Morais (1134723)
+Júlia de Lima Miranda (1136869)
+Maria Carolina Mendes Pegoraro (1136827)
+
+
 # 🔐 SecureAccess — Sistema de Controle de Acesso
 
 Esse projeto consiste em um sistema de controle de acesso utilizando RFID, desenvolvido com Python, Flask e Raspberry Pi.
