@@ -1,7 +1,3 @@
-ALUNOS: 
-Alisson Bosa de Morais (1134723)
-Júlia de Lima Miranda (1136869)
-Maria Carolina Mendes Pegoraro (1136827)
 
 
 # 🔐 SecureAccess — Sistema de Controle de Acesso
@@ -74,3 +70,9 @@ O projeto possui diversas funcionalidades voltadas para controle e monitoramento
 - Comunicação entre hardware e servidor Flask  
 - Armazenamento de dados com SQLite  
 - Atualização em tempo real dos acessos registrados
+
+ALUNOS: 
+Alisson Bosa de Morais (1134723)
+Júlia de Lima Miranda (1136869)
+Maria Carolina Mendes Pegoraro (1136827)
+
