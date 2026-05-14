@@ -1,10 +1,12 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 import psycopg2
 import csv
 import os
 from datetime import datetime
 from pubsub import AsyncConn
 from flask_cors import CORS
+from flask import Response
+
 
 app = Flask(__name__)
 CORS(app)
@@ -46,7 +48,8 @@ def montar_log(row):
         "tag_rfid": row[4],
         "status": row[5],
         "mensagem": row[6],
-        "timestamp": str(row[7])
+        "timestamp": str(row[7]),
+        "tempo_permanencia_minutos": float(row[8]) if len(row) > 8 and row[8] is not None else None
     }
 
 
@@ -54,7 +57,7 @@ def salvar_csv(evento):
     arquivo_existe = os.path.isfile(CSV_NAME)
 
     with open(CSV_NAME, "a", newline="", encoding="utf-8") as arquivo:
-        campos = ["tipo", "nome", "matricula", "tag_rfid", "status", "mensagem", "timestamp"]
+        campos = campos = ["tipo", "nome", "matricula", "tag_rfid", "status", "mensagem", "timestamp", "tempo_permanencia_minutos"]
         writer = csv.DictWriter(arquivo, fieldnames=campos)
 
         if not arquivo_existe:
@@ -79,6 +82,36 @@ def buscar_colaborador_por_tag(tag_rfid):
     return None
 
 
+def buscar_ultimo_log_por_tag(tag_rfid):
+    with connect_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT tipo
+                FROM logs_acesso
+                WHERE tag_rfid = %s
+                ORDER BY id DESC
+                LIMIT 1
+            """, (tag_rfid,))
+            return cursor.fetchone()
+
+
+def ja_entrou_hoje(tag_rfid):
+    hoje = datetime.now().strftime("%Y-%m-%d")
+
+    with connect_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT COUNT(*)
+                FROM logs_acesso
+                WHERE tag_rfid = %s
+                AND tipo = 'ENTRADA'
+                AND DATE(timestamp) = %s
+            """, (tag_rfid, hoje))
+            total = cursor.fetchone()[0]
+
+    return total > 0
+
+
 def criar_evento_por_tag(tag_rfid):
     colaborador = buscar_colaborador_por_tag(tag_rfid)
 
@@ -92,23 +125,40 @@ def criar_evento_por_tag(tag_rfid):
             "mensagem": "Tentativa de invasão com tag desconhecida"
         }
 
-    if colaborador["acesso"] is True and colaborador["ativo"] is True:
+    if colaborador["acesso"] is False or colaborador["ativo"] is False:
         return {
-            "tipo": "ENTRADA",
+            "tipo": "TENTATIVA_NEGADA",
             "nome": colaborador["nome"],
             "matricula": colaborador["matricula"],
             "tag_rfid": tag_rfid,
-            "status": "AUTORIZADO",
-            "mensagem": f"Bem-vindo, {colaborador['nome']}"
+            "status": "NAO_AUTORIZADO",
+            "mensagem": f"Acesso negado para {colaborador['nome']}"
         }
 
+    ultimo_log = buscar_ultimo_log_por_tag(tag_rfid)
+
+    if ultimo_log and ultimo_log[0] == "ENTRADA":
+        return {
+            "tipo": "SAIDA",
+            "nome": colaborador["nome"],
+            "matricula": colaborador["matricula"],
+            "tag_rfid": tag_rfid,
+            "status": "SAIDA_REGISTRADA",
+            "mensagem": f"Saída registrada para {colaborador['nome']}"
+        }
+
+    if ja_entrou_hoje(tag_rfid):
+        mensagem = f"Bem-vindo de volta, {colaborador['nome']}"
+    else:
+        mensagem = f"Bem-vindo, {colaborador['nome']}"
+
     return {
-        "tipo": "TENTATIVA_NEGADA",
+        "tipo": "ENTRADA",
         "nome": colaborador["nome"],
         "matricula": colaborador["matricula"],
         "tag_rfid": tag_rfid,
-        "status": "NAO_AUTORIZADO",
-        "mensagem": f"Acesso negado para {colaborador['nome']}"
+        "status": "AUTORIZADO",
+        "mensagem": mensagem
     }
 
 
@@ -116,8 +166,39 @@ def criar_evento_por_tag(tag_rfid):
 def raiz():
     if request.method == "POST":
         return registrar_evento()
+    
 
     return listar_logs()
+
+
+def calcular_tempo_permanencia(tag_rfid, timestamp_saida):
+    with connect_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT timestamp
+                FROM logs_acesso
+                WHERE tag_rfid = %s
+                AND tipo = 'ENTRADA'
+                ORDER BY id DESC
+                LIMIT 1
+            """, (tag_rfid,))
+
+            row = cursor.fetchone()
+
+    if not row:
+        return None
+
+    entrada = row[0]
+
+    if isinstance(timestamp_saida, str):
+        saida = datetime.strptime(timestamp_saida, "%Y-%m-%d %H:%M:%S")
+    else:
+        saida = timestamp_saida
+
+    diferenca = saida - entrada
+    minutos = round(diferenca.total_seconds() / 60, 2)
+
+    return minutos
 
 
 def registrar_evento():
@@ -136,13 +217,17 @@ def registrar_evento():
 
     evento = criar_evento_por_tag(tag_rfid)
     evento["timestamp"] = timestamp
+    evento["tempo_permanencia_minutos"] = None
+
+    if evento["tipo"] == "SAIDA":
+        evento["tempo_permanencia_minutos"] = calcular_tempo_permanencia(tag_rfid, timestamp)
 
     with connect_db() as conn:
         with conn.cursor() as cursor:
             cursor.execute("""
                 INSERT INTO logs_acesso
-                (tipo, nome, matricula, tag_rfid, status, mensagem, timestamp)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                (tipo, nome, matricula, tag_rfid, status, mensagem, timestamp, tempo_permanencia_minutos)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 evento["tipo"],
                 evento["nome"],
@@ -150,7 +235,8 @@ def registrar_evento():
                 evento["tag_rfid"],
                 evento["status"],
                 evento["mensagem"],
-                evento["timestamp"]
+                evento["timestamp"],
+                evento["tempo_permanencia_minutos"]
             ))
             conn.commit()
 
@@ -195,6 +281,11 @@ def logs_recentes():
 @app.route("/logs/entradas", methods=["GET"])
 def logs_entradas():
     return buscar_logs_por_tipo("ENTRADA")
+
+
+@app.route("/logs/saidas", methods=["GET"])
+def logs_saidas():
+    return buscar_logs_por_tipo("SAIDA")
 
 
 @app.route("/logs/negados", methods=["GET"])
@@ -374,6 +465,43 @@ def login():
         }
     }), 200
 
+@app.route("/logs/export/csv", methods=["GET"])
+def exportar_logs_csv():
+    with connect_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT tipo, nome, matricula, tag_rfid, status, mensagem, timestamp
+                FROM logs_acesso
+                ORDER BY id DESC
+            """)
+            rows = cursor.fetchall()
 
+    csv_content = "tipo,nome,matricula,tag_rfid,status,mensagem,timestamp\n"
+
+    for row in rows:
+        linha = [
+            str(row[0] or ""),
+            str(row[1] or ""),
+            str(row[2] or ""),
+            str(row[3] or ""),
+            str(row[4] or ""),
+            str(row[5] or ""),
+            str(row[6] or "")
+        ]
+
+        linha_formatada = ",".join(
+            '"' + campo.replace('"', '""') + '"'
+            for campo in linha
+        )
+
+        csv_content += linha_formatada + "\n"
+
+    return Response(
+        csv_content,
+        mimetype="text/csv",
+        headers={
+            "Content-Disposition": "attachment; filename=logs_secureaccess.csv"
+        }
+    )
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)

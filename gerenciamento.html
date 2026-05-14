@@ -86,7 +86,7 @@
   <div class="page active" id="page-overview">
     <div class="page-header">
       <div class="page-title">Visão Geral</div>
-      <div class="page-sub">// dashboard de acesso — preparado para endpoints</div>
+      <div class="page-sub"></div>
     </div>
     <div class="stats">
       <div class="stat-card"><div class="stat-num" id="s-total">—</div><div class="stat-label">Colaboradores</div></div>
@@ -104,7 +104,7 @@
     <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;">
       <div>
         <div class="page-title">Colaboradores</div>
-        <div class="page-sub">// cadastro, edição e permissões de acesso</div>
+        <div class="page-sub"></div>
       </div>
       <button class="btn btn-primary" onclick="openModal()">+ Novo Colaborador</button>
     </div>
@@ -121,7 +121,7 @@
     <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;">
       <div>
         <div class="page-title">Logs de Acesso</div>
-        <div class="page-sub">// histórico completo de entradas, saídas e tentativas</div>
+        <div class="page-sub"></div>
       </div>
       <button class="btn btn-primary" onclick="exportCsv()">↓ Exportar CSV</button>
     </div>
@@ -138,7 +138,7 @@
   <div class="page" id="page-monitoramento">
     <div class="page-header">
       <div class="page-title">Monitoramento em Tempo Real</div>
-      <div class="page-sub">// página para segurança — atualização via polling</div>
+      <div class="page-sub"></div>
     </div>
     <div class="stats">
       <div class="stat-card"><div class="stat-num" id="m-dentro">—</div><div class="stat-label">Dentro da sala</div></div>
@@ -213,6 +213,23 @@ function normalizarColab(c) {
     ativo: Boolean(c.ativo)
   };
 }
+
+async function exportCsv() {
+  const response = await fetch(`${API_BASE_URL}/logs/export/csv`);
+  const blob = await response.blob();
+
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+
+  a.href = url;
+  a.download = "logs_secureaccess.csv";
+  document.body.appendChild(a);
+  a.click();
+
+  a.remove();
+  window.URL.revokeObjectURL(url);
+}
+
 
 function normalizarLog(l) {
   const tipoOriginal = String(l.tipo || "").toUpperCase();
